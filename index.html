@@ -79,6 +79,9 @@
   .seg button.on { border-color: var(--accent); background: rgba(0, 229, 255, 0.12); box-shadow: 0 0 0 1px var(--accent) inset; }
   .seg button:disabled { opacity: 0.35; cursor: not-allowed; }
 
+  .label .val { color: var(--accent2); float: right; letter-spacing: 0; font-size: 0.8rem; }
+  .seg.audio button { flex-basis: 45%; }
+  input[type="range"] { width: 100%; margin: 14px 0 0; accent-color: var(--accent); }
   .summary { margin-top: 16px; font-size: 0.75rem; color: var(--dim); line-height: 1.5; text-align: center; }
   .summary b { color: var(--accent2); }
 
@@ -125,6 +128,31 @@
   </div>
 
   <div id="options" hidden>
+    <div class="label">Mode</div>
+    <div class="seg" data-key="mode">
+      <button data-val="slow" class="on">Slow Mode<small>Bina re-encode · foran</small></button>
+      <button data-val="hd">HD Encode<small>1080p · constant FPS</small></button>
+    </div>
+
+    <div id="slowOpts">
+    <div class="label">Speed <span class="val" id="speedVal">50%</span></div>
+    <div class="seg" data-key="speedPreset">
+      <button data-val="50" class="on">50%<small>60 → 30 FPS</small></button>
+      <button data-val="75">75%<small>Thora slow</small></button>
+      <button data-val="90">90%<small>Halka sa</small></button>
+    </div>
+    <input type="range" id="speed" min="50" max="99" step="1" value="50">
+
+    <div class="label">Awaaz</div>
+    <div class="seg audio" data-key="audio">
+      <button data-val="pitch" class="on">Slow, awaaz normal<small>Pitch same · sync</small></button>
+      <button data-val="tape">Slow + bhari<small>Cassette jaisi · sync</small></button>
+      <button data-val="orig">Original speed<small>Video se pehle khatam</small></button>
+      <button data-val="none">Hata dein<small>TikTok par music lagana ho</small></button>
+    </div>
+    </div>
+
+    <div id="hdOpts" hidden>
     <div class="label">Platform</div>
     <div class="seg" data-key="platform">
       <button data-val="tiktok" class="on">TikTok</button>
@@ -143,6 +171,7 @@
       <button data-val="high" class="on">High<small>Recommended</small></button>
       <button data-val="max">Max<small>Bari file</small></button>
     </div>
+    </div>
 
     <p class="summary" id="summary"></p>
     <button class="btn" id="goBtn">Optimize karein</button>
@@ -153,7 +182,7 @@
     <button class="btn ghost" id="cancelBtn">Cancel</button>
   </div>
   <div id="status"></div>
-  <a class="btn dl" id="dlBtn" hidden>Download HD video</a>
+  <a class="btn dl" id="dlBtn" hidden>Download video</a>
 
   <button class="btn install" id="installBtn" hidden>📲 App install karein</button>
   <p class="ios-tip" id="iosTip" hidden>iPhone par install: Safari mein <b>Share</b> button → <b>Add to Home Screen</b></p>
@@ -173,7 +202,8 @@
 <script type="module">
 import {
   Input, Output, Conversion, ALL_FORMATS, BlobSource, BufferTarget,
-  Mp4OutputFormat, canEncodeVideo,
+  Mp4OutputFormat, canEncodeVideo, EncodedPacket, EncodedPacketSink,
+  EncodedVideoPacketSource, EncodedAudioPacketSource, AudioSampleSink, AudioBufferSource,
 } from 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.0/dist/bundles/mediabunny.min.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -186,8 +216,8 @@ const PLATFORMS = {
 };
 const QUALITY_MULT = { high: 1, max: 1.5 };
 
-const state = { platform: 'tiktok', fps: '30', quality: 'high' };
-let file = null, src = null, conversion = null, downloadUrl = null;
+const state = { mode: 'slow', speed: 50, audio: 'pitch', platform: 'tiktok', fps: '30', quality: 'high' };
+let file = null, src = null, conversion = null, downloadUrl = null, cancelled = false;
 
 // --- Option buttons ---
 document.querySelectorAll('.seg').forEach((seg) => {
@@ -196,8 +226,16 @@ document.querySelectorAll('.seg').forEach((seg) => {
     if (!btn || btn.disabled) return;
     seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
     state[seg.dataset.key] = btn.dataset.val;
+    if (seg.dataset.key === 'speedPreset') { state.speed = Number(btn.dataset.val); $('speed').value = state.speed; }
+    if (seg.dataset.key === 'mode') { $('slowOpts').hidden = state.mode !== 'slow'; $('hdOpts').hidden = state.mode !== 'hd'; }
     renderSummary();
   });
+});
+
+$('speed').addEventListener('input', (e) => {
+  state.speed = Number(e.target.value);
+  document.querySelectorAll('.seg[data-key="speedPreset"] button').forEach((b) => b.classList.toggle('on', Number(b.dataset.val) === state.speed));
+  renderSummary();
 });
 
 function setSeg(key, val) {
@@ -289,7 +327,17 @@ function targetSettings() {
 }
 
 function renderSummary() {
+  $('speedVal').textContent = state.speed + '%';
   if (!src) return;
+  if (state.mode === 'slow') {
+    const k = state.speed / 100;
+    const audioText = { pitch: 'awaaz normal pitch par slow', tape: 'awaaz slow aur bhari', orig: 'awaaz original speed par', none: 'bina awaaz' }[state.audio];
+    $('summary').innerHTML =
+      `Length: <b>${fmtTime(src.duration)} → ${fmtTime(src.duration / k)}</b> · ` +
+      `FPS: <b>${src.fps.toFixed(0)} → ${(src.fps * k).toFixed(0)}</b><br>` +
+      `Video quality bilkul original (re-encode nahi) · ${src.hasAudio ? audioText : 'video mein awaaz nahi'}`;
+    return;
+  }
   const t = targetSettings();
   const estSize = (t.bitrate + 192e3) / 8 * src.duration;
   $('summary').innerHTML =
@@ -298,9 +346,13 @@ function renderSummary() {
 }
 
 // --- Conversion ---
-$('goBtn').addEventListener('click', async () => {
+$('goBtn').addEventListener('click', () => {
   if (!file || !src) return;
   resetOutput();
+  (state.mode === 'slow' ? runSlow : runHd)();
+});
+
+async function runHd() {
   const t = targetSettings();
 
   const supported = await canEncodeVideo('avc', { width: t.width, height: t.height, bitrate: t.bitrate });
@@ -380,9 +432,192 @@ $('goBtn').addEventListener('click', async () => {
     $('goBtn').disabled = false;
     $('progressWrap').hidden = true;
   }
-});
+}
 
-$('cancelBtn').addEventListener('click', () => conversion?.cancel());
+// --- Slow Mode: stretch timestamps without re-encoding the video ---
+async function runSlow() {
+  const k = state.speed / 100;   // playback speed factor, e.g. 0.5
+  cancelled = false;
+  $('goBtn').disabled = true;
+  $('progressWrap').hidden = false;
+  setProgress(0);
+  const started = performance.now();
+  const checkCancel = () => { if (cancelled) throw new Error('cancel'); };
+
+  try {
+    const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+    const vTrack = await input.getPrimaryVideoTrack();
+    const aTrack = state.audio === 'none' ? null : await input.getPrimaryAudioTrack();
+    const output = new Output({
+      format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+      target: new BufferTarget(),
+    });
+
+    const vSource = new EncodedVideoPacketSource(vTrack.codec);
+    output.addVideoTrack(vSource, { rotation: vTrack.rotation });
+
+    // Audio: either copy packets untouched, or decode → slow down → AAC.
+    let aSource = null, slowedAudio = null;
+    if (aTrack && state.audio === 'orig') {
+      aSource = new EncodedAudioPacketSource(aTrack.codec);
+      output.addAudioTrack(aSource);
+    } else if (aTrack) {
+      setStatus('Awaaz process ho rahi hai...');
+      const pcm = await decodeAudio(aTrack, (p) => { checkCancel(); setProgress(p * 0.3); });
+      checkCancel();
+      if (!pcm.channels[0].length) throw new Error('Awaaz decode nahi ho saki. "Original speed" ya "Hata dein" try karein.');
+      slowedAudio = state.audio === 'tape' ? await slowTape(pcm, k) : slowKeepPitch(pcm, k);
+      aSource = new AudioBufferSource({ codec: 'aac', bitrate: 192e3 });
+      output.addAudioTrack(aSource);
+    }
+
+    await output.start();
+    setStatus('Video likhi ja rahi hai...');
+
+    const vConfig = await vTrack.getDecoderConfig();
+    let first = true;
+    for await (const p of new EncodedPacketSink(vTrack).packets()) {
+      checkCancel();
+      const slowed = new EncodedPacket(p.data, p.type, p.timestamp / k, p.duration / k, p.sequenceNumber);
+      await vSource.add(slowed, first ? { decoderConfig: vConfig } : undefined);
+      first = false;
+      setProgress(0.3 + 0.6 * Math.min(1, p.timestamp / src.duration));
+    }
+
+    if (aSource && state.audio === 'orig') {
+      const aConfig = await aTrack.getDecoderConfig();
+      let firstA = true;
+      for await (const p of new EncodedPacketSink(aTrack).packets()) {
+        checkCancel();
+        await aSource.add(p, firstA ? { decoderConfig: aConfig } : undefined);
+        firstA = false;
+      }
+    } else if (aSource) {
+      await aSource.add(slowedAudio);
+    }
+
+    setStatus('File final ho rahi hai...');
+    await output.finalize();
+
+    const blob = new Blob([output.target.buffer], { type: 'video/mp4' });
+    downloadUrl = URL.createObjectURL(blob);
+    const dl = $('dlBtn');
+    dl.href = downloadUrl;
+    dl.download = file.name.replace(/\.[^.]+$/, '') + `_slow${state.speed}.mp4`;
+    dl.hidden = false;
+    setProgress(1);
+    setStatus(`Tayyar! ${fmtTime(src.duration / k)} lambi · ${fmtSize(blob.size)} · ${fmtTime((performance.now() - started) / 1000)} mein`, 'ok');
+  } catch (err) {
+    if (cancelled) setStatus('Cancel ho gaya.');
+    else { console.error(err); setStatus('Error: ' + (err?.message || err), 'err'); }
+  } finally {
+    $('goBtn').disabled = false;
+    $('progressWrap').hidden = true;
+  }
+}
+
+// Decode a whole audio track into per-channel Float32Arrays (max 2 channels).
+async function decodeAudio(track, onProgress) {
+  const sampleRate = track.sampleRate;
+  const channels = Math.min(2, track.numberOfChannels);
+  const chunks = [];
+  let total = 0;
+  for await (const sample of new AudioSampleSink(track).samples()) {
+    const buf = sample.toAudioBuffer();
+    sample.close();
+    const data = [];
+    for (let c = 0; c < channels; c++) data.push(buf.getChannelData(Math.min(c, buf.numberOfChannels - 1)).slice());
+    chunks.push(data);
+    total += buf.length;
+    onProgress(Math.min(1, (total / sampleRate) / src.duration));
+  }
+  const out = Array.from({ length: channels }, () => new Float32Array(total));
+  let off = 0;
+  for (const data of chunks) {
+    for (let c = 0; c < channels; c++) out[c].set(data[c], off);
+    off += data[0].length;
+  }
+  return { channels: out, sampleRate };
+}
+
+function toAudioBuffer(channels, sampleRate) {
+  const buf = new AudioBuffer({ length: channels[0].length, numberOfChannels: channels.length, sampleRate });
+  channels.forEach((d, c) => buf.copyToChannel(d, c));
+  return buf;
+}
+
+// Tape-style slowdown: play the audio slower, so pitch drops along with speed.
+async function slowTape({ channels, sampleRate }, k) {
+  const length = Math.ceil(channels[0].length / k);
+  const ctx = new OfflineAudioContext(channels.length, length, sampleRate);
+  const node = ctx.createBufferSource();
+  node.buffer = toAudioBuffer(channels, sampleRate);
+  node.playbackRate.value = k;
+  node.connect(ctx.destination);
+  node.start();
+  return ctx.startRendering();
+}
+
+// Pitch-preserving time stretch (WSOLA): longer audio, same voice.
+function slowKeepPitch({ channels, sampleRate }, k) {
+  const len = channels[0].length;
+  const win = Math.round(sampleRate * 0.04 / 2) * 2;   // ~40 ms
+  const hop = win / 2;                                  // output hop
+  const tol = Math.round(sampleRate * 0.01);            // ±10 ms search
+  const D = 4;                                          // decimation for the coarse search
+
+  // Mono, decimated copy for fast similarity search.
+  const mono = new Float32Array(Math.ceil(len / D));
+  for (let i = 0; i < mono.length; i++) {
+    let sum = 0;
+    for (const ch of channels) sum += ch[i * D] || 0;
+    mono[i] = sum / channels.length;
+  }
+  const window = new Float32Array(win);
+  for (let i = 0; i < win; i++) window[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / win);
+
+  const outLen = Math.ceil(len / k) + win;
+  const out = channels.map(() => new Float32Array(outLen));
+  const norm = new Float32Array(outLen);
+  const cmpLen = Math.floor(hop / D);
+
+  let prev = 0;
+  for (let n = 0; ; n++) {
+    const outPos = n * hop;
+    const nominal = Math.round((n * hop) * k);
+    if (nominal + win >= len || outPos + win >= outLen) break;
+
+    let pos = nominal;
+    if (n > 0) {
+      // Find the input position whose start best continues the previous segment.
+      const target = Math.floor((prev + hop) / D);
+      const lo = Math.max(0, Math.floor((nominal - tol) / D));
+      const hi = Math.min(Math.floor((len - win) / D) - 1, Math.floor((nominal + tol) / D));
+      let best = -Infinity;
+      for (let c = lo; c <= hi; c++) {
+        let corr = 0;
+        for (let i = 0; i < cmpLen; i++) corr += mono[target + i] * mono[c + i];
+        if (corr > best) { best = corr; pos = c * D; }
+      }
+    }
+    for (let c = 0; c < channels.length; c++) {
+      const src = channels[c], dst = out[c];
+      for (let i = 0; i < win; i++) dst[outPos + i] += src[pos + i] * window[i];
+    }
+    for (let i = 0; i < win; i++) norm[outPos + i] += window[i];
+    prev = pos;
+  }
+
+  const finalLen = Math.round(len / k);
+  const result = out.map((d) => {
+    const r = new Float32Array(finalLen);
+    for (let i = 0; i < finalLen; i++) r[i] = norm[i] > 1e-3 ? d[i] / norm[i] : 0;
+    return r;
+  });
+  return toAudioBuffer(result, sampleRate);
+}
+
+$('cancelBtn').addEventListener('click', () => { cancelled = true; conversion?.cancel(); });
 
 // --- Install as app (PWA) ---
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.error);
@@ -416,8 +651,10 @@ function setProgress(p) { $('barFill').style.width = (p * 100).toFixed(1) + '%';
 function setStatus(msg, cls = '') { const s = $('status'); s.textContent = msg; s.className = cls; }
 function fmtSize(b) { return b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(1) + ' MB'; }
 function fmtTime(s) {
-  s = Math.max(0, Math.round(s));
-  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+  s = Math.max(0, s);
+  if (s < 60) return (s < 10 ? s.toFixed(1) : Math.round(s)) + 's';
+  s = Math.round(s);
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 </script>
 </body>
