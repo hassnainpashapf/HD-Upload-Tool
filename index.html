@@ -166,10 +166,6 @@
     <button class="btn" id="goBtn">Patch &amp; Download</button>
   </div>
 
-  <div id="progressWrap" hidden>
-    <div class="bar"><i id="barFill"></i></div>
-    <button class="btn ghost" id="cancelBtn">Cancel</button>
-  </div>
   <div id="status"></div>
   <a class="btn dl" id="dlBtn" hidden>Download video</a>
 
@@ -255,23 +251,17 @@
 </script>
 
 <script type="module">
-import {
-  Input, Output, ALL_FORMATS, BlobSource, BufferTarget, Mp4OutputFormat, MovOutputFormat,
-  EncodedPacket, EncodedPacketSink, EncodedVideoPacketSource, EncodedAudioPacketSource, AudioBufferSource,
-} from 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.0/dist/bundles/mediabunny.min.mjs';
+import { Input, ALL_FORMATS, BlobSource } from 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.0/dist/bundles/mediabunny.min.mjs';
 
 const $ = (id) => document.getElementById(id);
 
-// Nothing is ever re-encoded. Video gets slowed by stretching frame timestamps; AAC audio gets slowed
-// by relabeling its sample rate one step lower (e.g. 48000 → 44100), so the player itself plays it slower.
-// The video uses the exact same ratio, so both stay in sync.
-// Other audio (e.g. 44.1 kHz) is decoded with Web Audio, slowed by the same ratio, and re-encoded:
-// AAC where the browser has an encoder, otherwise uncompressed PCM in a MOV (iPhone Safari).
-const AAC_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
-const SPEED = 44100 / 48000;   // ≈ 0.919
-const HAS_AUDIO_ENCODER = 'AudioEncoder' in window;
+// The patch: halve the timescale in `mvhd` and in every track's `mdhd`, leaving all durations and sample
+// tables untouched. Every timestamp in the file then means twice as long, so players show the video at
+// half speed (60 → 30 FPS, 5s → 10s). Not a single audio/video byte changes: only the small `moov` box
+// is rewritten, and the rest of the file is passed through as-is.
+const FACTOR = 2;
 
-let file = null, src = null, downloadUrl = null, cancelled = false;
+let file = null, src = null, downloadUrl = null;
 
 // --- File selection ---
 const drop = $('drop');
@@ -306,62 +296,17 @@ async function analyze(f) {
   const input = new Input({ source: new BlobSource(f), formats: ALL_FORMATS });
   const video = await input.getPrimaryVideoTrack();
   if (!video) throw new Error('Is file mein video track nahi mila.');
-  const audio = await input.getPrimaryAudioTrack();
   const stats = await video.computePacketStats(300);
-
-  let audioPatch = null;
-  if (audio?.codec === 'aac') audioPatch = slowAacConfig(await audio.getDecoderConfig());
-
   return {
     width: video.displayWidth,
     height: video.displayHeight,
     fps: stats.averagePacketRate,
     bitrate: stats.averageBitrate,
     duration: await input.computeDuration(),
-    hasAudio: !!audio,
-    audioPatch,                                   // null = audio must be decoded and re-encoded
-    speed: SPEED,
   };
 }
 
-// Rewrites the AAC AudioSpecificConfig from 48000 to 44100 Hz (or 96000 to 88200), so the decoder itself
-// plays the audio ≈8% slower. Returns the patched decoder config, or null if the audio isn't eligible.
-function slowAacConfig(config) {
-  if (!config?.description) return null;
-  const desc = config.description instanceof ArrayBuffer
-    ? new Uint8Array(config.description)
-    : new Uint8Array(config.description.buffer, config.description.byteOffset, config.description.byteLength);
-  if (desc.length < 2) return null;
-
-  const objectType = desc[0] >> 3;                              // 5 bits
-  const rateIndex = ((desc[0] & 0x07) << 1) | (desc[1] >> 7);   // 4 bits
-  // Plain AAC only; HE-AAC (5/29) carries a second rate and 31 is an escape we don't handle.
-  if (objectType === 0 || objectType === 5 || objectType === 29 || objectType === 31) return null;
-  const rate = AAC_RATES[rateIndex];
-  if (rate !== 48000 && rate !== 96000) return null;
-
-  const newIndex = rateIndex + 1;
-  const patched = desc.slice();
-  patched[0] = (patched[0] & 0xF8) | (newIndex >> 1);
-  patched[1] = (patched[1] & 0x7F) | ((newIndex & 1) << 7);
-  return { config: { ...config, sampleRate: AAC_RATES[newIndex], description: patched } };
-}
-
-// Decodes the file's audio with Web Audio and plays it back slower (pitch drops with speed, like the AAC patch).
-async function slowDecodedAudio(f, k) {
-  const decoded = await new OfflineAudioContext(2, 1, 44100).decodeAudioData(await f.arrayBuffer());
-  const channels = Math.min(2, decoded.numberOfChannels);
-  const ctx = new OfflineAudioContext(channels, Math.ceil(decoded.length / k), decoded.sampleRate);
-  const node = ctx.createBufferSource();
-  node.buffer = decoded;
-  node.playbackRate.value = k;
-  node.connect(ctx.destination);
-  node.start();
-  return ctx.startRendering();
-}
-
 function renderInfo() {
-  const k = src.speed;
   const items = [
     ['Resolution', `${src.width}×${src.height}`],
     ['FPS', src.fps ? src.fps.toFixed(1) : '—'],
@@ -371,108 +316,112 @@ function renderInfo() {
   $('info').innerHTML = items.map(([k, v]) => `<div><small>${k}</small><b>${v}</b></div>`).join('');
 
   const steps = [
-    ['fix', `<b>Speed ${Math.round(k * 100)}%</b>: thori slow aur smooth`],
-    ['fix', `<b>Length ${fmtTime(src.duration)} → ${fmtTime(src.duration / k)}</b>`],
-    ['fix', `<b>FPS ${src.fps.toFixed(0)} → ${(src.fps * k).toFixed(1)}</b>`],
-    ['ok', '<b>Quality 100% wohi</b>: koi compression nahi, frames ko haath nahi lagaya jata'],
+    ['fix', `<b>FPS ${Math.round(src.fps)} → ${Math.round(src.fps / FACTOR)}</b>`],
+    ['fix', `<b>Length ${fmtTime(src.duration)} → ${fmtTime(src.duration * FACTOR)}</b>`],
+    ['ok', '<b>Quality 100% wohi</b>: video aur awaaz ka ek bhi byte nahi badalta'],
+    ['ok', `<b>Size wohi</b>: ${fmtSize(file.size)}`],
   ];
-  if (src.hasAudio) steps.push(['ok', '<b>Awaaz bhi utni hi slow</b>: video ke saath sync']);
   $('plan').innerHTML = '<div class="plan-title">Tool ye karega</div>' +
     steps.map(([cls, text]) => `<li class="${cls}">${text}</li>`).join('');
-
   $('warn').hidden = true;
 }
 
-// --- Processing ---
+// --- Binary patch ---
+async function readBytes(blob, start, length) {
+  return new Uint8Array(await blob.slice(start, start + length).arrayBuffer());
+}
+
+// Reads a box header at `pos`. Returns { type, start, headerSize, size }.
+async function readHeader(blob, pos, end) {
+  const h = await readBytes(blob, pos, 16);
+  const view = new DataView(h.buffer);
+  let size = view.getUint32(0);
+  const type = String.fromCharCode(h[4], h[5], h[6], h[7]);
+  let headerSize = 8;
+  if (size === 1) { size = Number(view.getBigUint64(8)); headerSize = 16; }
+  else if (size === 0) size = end - pos;
+  if (size < headerSize) throw new Error('File kharab hai (box size).');
+  return { type, start: pos, headerSize, size };
+}
+
+// Walks boxes inside an in-memory buffer.
+function* childBoxes(bytes, start, end) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let pos = start;
+  while (pos + 8 <= end) {
+    let size = view.getUint32(pos), headerSize = 8;
+    const type = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
+    if (size === 1) { size = Number(view.getBigUint64(pos + 8)); headerSize = 16; }
+    else if (size === 0) size = end - pos;
+    if (size < headerSize || pos + size > end) break;
+    yield { type, start: pos, body: pos + headerSize, end: pos + size };
+    pos += size;
+  }
+}
+
+// mvhd and mdhd share the layout: version(1) flags(3), then times, then the 32-bit timescale.
+function halveTimescale(view, body) {
+  const version = view.getUint8(body);
+  const at = body + (version === 1 ? 20 : 12);
+  const ts = view.getUint32(at);
+  if (ts % FACTOR !== 0) throw new Error(`Is video ka timescale (${ts}) patch nahi ho sakta.`);
+  view.setUint32(at, ts / FACTOR);
+  return ts;
+}
+
+async function patchFile(f) {
+  // Find the top-level moov box without loading the whole file.
+  let pos = 0, moov = null;
+  while (pos + 8 <= f.size) {
+    const box = await readHeader(f, pos, f.size);
+    if (box.type === 'moov') { moov = box; break; }
+    pos += box.size;
+  }
+  if (!moov) throw new Error('Is file mein moov box nahi mila. MP4 ya MOV video use karein.');
+
+  const bytes = await readBytes(f, moov.start, moov.size);
+  const view = new DataView(bytes.buffer);
+  const changed = [];
+
+  for (const box of childBoxes(bytes, moov.headerSize, bytes.length)) {
+    if (box.type === 'mvhd') changed.push(['mvhd', halveTimescale(view, box.body)]);
+    if (box.type !== 'trak') continue;
+    for (const mdia of childBoxes(bytes, box.body, box.end)) {
+      if (mdia.type !== 'mdia') continue;
+      for (const mdhd of childBoxes(bytes, mdia.body, mdia.end)) {
+        if (mdhd.type === 'mdhd') changed.push(['mdhd', halveTimescale(view, mdhd.body)]);
+      }
+    }
+  }
+  if (!changed.some(([t]) => t === 'mvhd') || !changed.some(([t]) => t === 'mdhd')) {
+    throw new Error('Is video ke time boxes nahi mile.');
+  }
+
+  return new Blob([f.slice(0, moov.start), bytes, f.slice(moov.start + moov.size)], { type: f.type || 'video/mp4' });
+}
+
 $('goBtn').addEventListener('click', async () => {
   if (!file || !src) return;
   resetOutput();
-  cancelled = false;
   $('goBtn').disabled = true;
-  $('progressWrap').hidden = false;
-  setProgress(0);
   setStatus('Patch ho rahi hai...');
-  const k = src.speed;
-  const checkCancel = () => { if (cancelled) throw new Error('cancel'); };
 
   try {
-    const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
-    const vTrack = await input.getPrimaryVideoTrack();
-    const aTrack = src.audioPatch ? await input.getPrimaryAudioTrack() : null;
-
-    // Audio that can't be patched losslessly gets decoded and slowed up front.
-    let slowedAudio = null;
-    if (src.hasAudio && !src.audioPatch) {
-      setStatus('Awaaz slow ho rahi hai...');
-      slowedAudio = await slowDecodedAudio(file, k);
-      checkCancel();
-    }
-    const usePcm = slowedAudio && !HAS_AUDIO_ENCODER;
-    const output = new Output({
-      format: usePcm ? new MovOutputFormat({ fastStart: 'in-memory' }) : new Mp4OutputFormat({ fastStart: 'in-memory' }),
-      target: new BufferTarget(),
-    });
-
-    const vSource = new EncodedVideoPacketSource(vTrack.codec);
-    output.addVideoTrack(vSource, { rotation: vTrack.rotation });
-    let aSource = null, bufSource = null;
-    if (aTrack) {
-      aSource = new EncodedAudioPacketSource('aac');
-      output.addAudioTrack(aSource);
-    } else if (slowedAudio) {
-      bufSource = new AudioBufferSource(usePcm ? { codec: 'pcm-s16' } : { codec: 'aac', bitrate: 256e3 });
-      output.addAudioTrack(bufSource);
-    }
-    await output.start();
-    setStatus('Patch ho rahi hai...');
-    if (bufSource) await bufSource.add(slowedAudio);
-
-    // Packets are interleaved by time so the file streams well.
-    const vConfig = await vTrack.getDecoderConfig();
-    const vIter = new EncodedPacketSink(vTrack).packets();
-    const aIter = aTrack ? new EncodedPacketSink(aTrack).packets() : null;
-    let v = await vIter.next(), a = aIter ? await aIter.next() : { done: true };
-    let firstV = true, firstA = true;
-
-    while (!v.done || !a.done) {
-      checkCancel();
-      if (!v.done && (a.done || v.value.timestamp <= a.value.timestamp)) {
-        const p = v.value;
-        await vSource.add(new EncodedPacket(p.data, p.type, p.timestamp / k, p.duration / k, p.sequenceNumber),
-          firstV ? { decoderConfig: vConfig } : undefined);
-        firstV = false;
-        setProgress(Math.min(1, p.timestamp / src.duration));
-        v = await vIter.next();
-      } else {
-        const p = a.value;
-        await aSource.add(new EncodedPacket(p.data, p.type, p.timestamp / k, p.duration / k, p.sequenceNumber),
-          firstA ? { decoderConfig: src.audioPatch.config } : undefined);
-        firstA = false;
-        a = await aIter.next();
-      }
-    }
-
-    setStatus('File final ho rahi hai...');
-    await output.finalize();
-
-    const blob = new Blob([output.target.buffer], { type: usePcm ? 'video/quicktime' : 'video/mp4' });
+    const blob = await patchFile(file);
     downloadUrl = URL.createObjectURL(blob);
     const dl = $('dlBtn');
+    const ext = (file.name.match(/\.[^.]+$/) || ['.mp4'])[0];
     dl.href = downloadUrl;
-    dl.download = file.name.replace(/\.[^.]+$/, '') + (usePcm ? '_HD.mov' : '_HD.mp4');
+    dl.download = file.name.replace(/\.[^.]+$/, '') + '_patched' + ext;
     dl.hidden = false;
-    setProgress(1);
-    setStatus(`Tayyar! ${fmtTime(src.duration / k)} lambi · ${fmtSize(blob.size)} (original ${fmtSize(file.size)})`, 'ok');
+    setStatus(`Tayyar! ${fmtTime(src.duration * FACTOR)} · ${Math.round(src.fps / FACTOR)} FPS · ${fmtSize(blob.size)}`, 'ok');
   } catch (err) {
-    if (cancelled) setStatus('Cancel ho gaya.');
-    else { console.error(err); setStatus('Error: ' + (err?.message || err), 'err'); }
+    console.error(err);
+    setStatus('Error: ' + (err?.message || err), 'err');
   } finally {
     $('goBtn').disabled = false;
-    $('progressWrap').hidden = true;
   }
 });
-
-$('cancelBtn').addEventListener('click', () => { cancelled = true; });
 
 // --- Install as app (PWA) ---
 if ('serviceWorker' in navigator) {
@@ -507,7 +456,6 @@ function resetOutput() {
   downloadUrl = null;
   $('dlBtn').hidden = true;
 }
-function setProgress(p) { $('barFill').style.width = (p * 100).toFixed(1) + '%'; }
 function setStatus(msg, cls = '') { const s = $('status'); s.textContent = msg; s.className = cls; }
 function fmtSize(b) { return b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(1) + ' MB'; }
 function fmtTime(s) {
