@@ -1,4 +1,4 @@
-const CACHE = 'hd-upload-v3';
+const CACHE = 'hd-upload-v4';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
