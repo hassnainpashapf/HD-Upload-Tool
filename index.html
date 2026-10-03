@@ -169,6 +169,8 @@ const $ = (id) => document.getElementById(id);
 const MAX_SHORT = 1080, MAX_LONG = 1920, MAX_FPS = 60;
 const STD_FPS = [24, 25, 30, 50, 60];
 const BITRATE_1080 = { 30: 16e6, 60: 24e6 };   // generous, so the platform's re-encode has the best source
+// iPhone Safari has no AudioDecoder/AudioEncoder, so audio is only re-encoded where the browser supports it.
+const CAN_ENCODE_AUDIO = 'AudioDecoder' in window && 'AudioEncoder' in window;
 
 let file = null, src = null, plan = null, conversion = null, downloadUrl = null;
 
@@ -263,7 +265,7 @@ function makePlan(s) {
     steps.push(['ok', '<b>Video bilkul theek hai</b>: H.264, ' + `${s.width}×${s.height}, ${Math.round(s.fps)} FPS constant.`]);
     steps.push(['ok', '<b>Frames ko haath nahi lagaya jayega</b>: 0% quality loss.']);
   }
-  if (s.audioCodec && s.audioCodec !== 'aac') steps.push(['fix', '<b>Awaaz → AAC</b>: platform ka standard audio format.']);
+  if (s.audioCodec && s.audioCodec !== 'aac' && CAN_ENCODE_AUDIO) steps.push(['fix', '<b>Awaaz → AAC</b>: platform ka standard audio format.']);
   steps.push(['ok', '<b>Fast-start + purana metadata saaf</b>: upload aur processing ke liye tayyar file.']);
 
   return { needsEncode, target, steps };
@@ -339,7 +341,7 @@ $('goBtn').addEventListener('click', async () => {
 
     conversion = await Conversion.init({
       input, output, video,
-      audio: src.audioCodec === 'aac' ? {} : { codec: 'aac', sampleRate: 48000, numberOfChannels: 2, bitrate: 256e3 },
+      audio: src.audioCodec === 'aac' || !CAN_ENCODE_AUDIO ? {} : { codec: 'aac', sampleRate: 48000, numberOfChannels: 2, bitrate: 256e3 },
       tags: {},
       showWarnings: false,
     });
@@ -377,7 +379,12 @@ $('goBtn').addEventListener('click', async () => {
 $('cancelBtn').addEventListener('click', () => conversion?.cancel());
 
 // --- Install as app (PWA) ---
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.error);
+if ('serviceWorker' in navigator) {
+  // When a new version is deployed, reload once so the old cached page never sticks around.
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) location.reload(); });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(console.error);
+}
 
 let installPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => {

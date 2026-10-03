@@ -1,4 +1,4 @@
-const CACHE = 'hd-upload-v2';
+const CACHE = 'hd-upload-v3';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -20,7 +20,7 @@ self.addEventListener('fetch', (e) => {
 
   if (req.mode === 'navigate') {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-store' })
         .then((res) => { caches.open(CACHE).then((c) => c.put(req, res.clone())); return res; })
         .catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
     );
