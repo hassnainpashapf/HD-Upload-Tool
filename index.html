@@ -109,6 +109,12 @@
   summary { padding: 14px 18px; cursor: pointer; font: 800 0.75rem 'Exo 2', sans-serif; letter-spacing: 1px; text-transform: uppercase; }
   details ul { margin: 0; padding: 0 18px 16px 34px; color: var(--dim); font-size: 0.78rem; line-height: 1.6; }
   details li b { color: var(--text); }
+  .plan { list-style: none; margin: 18px 0 0; padding: 14px 16px; border-radius: 16px; background: rgba(0,255,170,0.05); border: 1px solid rgba(0,255,170,0.2); font-size: 0.78rem; line-height: 1.55; }
+  .plan li { padding-left: 22px; position: relative; margin: 4px 0; color: var(--dim); }
+  .plan li::before { content: '✓'; position: absolute; left: 0; color: var(--accent2); font-weight: 700; }
+  .plan li.fix::before { content: '⚙'; color: var(--accent); }
+  .plan li b { color: var(--text); }
+  .plan-title { font: 800 0.72rem 'Exo 2', sans-serif; letter-spacing: 1px; text-transform: uppercase; color: var(--accent2); margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -124,57 +130,9 @@
 
   <div id="infoWrap" hidden>
     <div class="info" id="info"></div>
+    <ul class="plan" id="plan"></ul>
     <p class="warn" id="warn" hidden></p>
-  </div>
-
-  <div id="options" hidden>
-    <div class="label">Mode</div>
-    <div class="seg" data-key="mode">
-      <button data-val="slow" class="on">Slow Mode<small>Bina re-encode · foran</small></button>
-      <button data-val="hd">HD Encode<small>1080p · constant FPS</small></button>
-    </div>
-
-    <div id="slowOpts">
-    <div class="label">Speed <span class="val" id="speedVal">50%</span></div>
-    <div class="seg" data-key="speedPreset">
-      <button data-val="50" class="on">50%<small>60 → 30 FPS</small></button>
-      <button data-val="75">75%<small>Thora slow</small></button>
-      <button data-val="90">90%<small>Halka sa</small></button>
-    </div>
-    <input type="range" id="speed" min="50" max="99" step="1" value="50">
-
-    <div class="label">Awaaz</div>
-    <div class="seg audio" data-key="audio">
-      <button data-val="pitch" class="on">Slow, awaaz normal<small>Pitch same · sync</small></button>
-      <button data-val="tape">Slow + bhari<small>Cassette jaisi · sync</small></button>
-      <button data-val="orig">Original speed<small>Video se pehle khatam</small></button>
-      <button data-val="none">Hata dein<small>TikTok par music lagana ho</small></button>
-    </div>
-    </div>
-
-    <div id="hdOpts" hidden>
-    <div class="label">Platform</div>
-    <div class="seg" data-key="platform">
-      <button data-val="tiktok" class="on">TikTok</button>
-      <button data-val="instagram">Instagram</button>
-      <button data-val="youtube">YT Shorts</button>
-    </div>
-
-    <div class="label">Smoothness (FPS)</div>
-    <div class="seg" data-key="fps">
-      <button data-val="30">30 FPS<small>Sab se safe</small></button>
-      <button data-val="60">60 FPS<small>Extra smooth</small></button>
-    </div>
-
-    <div class="label">Quality</div>
-    <div class="seg" data-key="quality">
-      <button data-val="high" class="on">High<small>Recommended</small></button>
-      <button data-val="max">Max<small>Bari file</small></button>
-    </div>
-    </div>
-
-    <p class="summary" id="summary"></p>
-    <button class="btn" id="goBtn">Optimize karein</button>
+    <button class="btn" id="goBtn">Patch &amp; Download</button>
   </div>
 
   <div id="progressWrap" hidden>
@@ -202,46 +160,17 @@
 <script type="module">
 import {
   Input, Output, Conversion, ALL_FORMATS, BlobSource, BufferTarget,
-  Mp4OutputFormat, canEncodeVideo, EncodedPacket, EncodedPacketSink,
-  EncodedVideoPacketSource, EncodedAudioPacketSource, AudioSampleSink, AudioBufferSource,
+  Mp4OutputFormat, canEncodeVideo, EncodedPacketSink,
 } from 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.0/dist/bundles/mediabunny.min.mjs';
 
 const $ = (id) => document.getElementById(id);
 
-// Bitrates (bps) at 1080x1920. Scaled by pixel count for smaller videos.
-const PLATFORMS = {
-  tiktok:    { name: 'TikTok',    bitrate: { 30: 12e6, 60: 18e6 } },
-  instagram: { name: 'Instagram', bitrate: { 30: 10e6, 60: 15e6 } },
-  youtube:   { name: 'YT Shorts', bitrate: { 30: 12e6, 60: 20e6 } },
-};
-const QUALITY_MULT = { high: 1, max: 1.5 };
+// What TikTok / Reels / Shorts handle best: H.264, max 1080x1920, max 60 constant FPS, SDR, AAC audio.
+const MAX_SHORT = 1080, MAX_LONG = 1920, MAX_FPS = 60;
+const STD_FPS = [24, 25, 30, 50, 60];
+const BITRATE_1080 = { 30: 16e6, 60: 24e6 };   // generous, so the platform's re-encode has the best source
 
-const state = { mode: 'slow', speed: 50, audio: 'pitch', platform: 'tiktok', fps: '30', quality: 'high' };
-let file = null, src = null, conversion = null, downloadUrl = null, cancelled = false;
-
-// --- Option buttons ---
-document.querySelectorAll('.seg').forEach((seg) => {
-  seg.addEventListener('click', (e) => {
-    const btn = e.target.closest('button');
-    if (!btn || btn.disabled) return;
-    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
-    state[seg.dataset.key] = btn.dataset.val;
-    if (seg.dataset.key === 'speedPreset') { state.speed = Number(btn.dataset.val); $('speed').value = state.speed; }
-    if (seg.dataset.key === 'mode') { $('slowOpts').hidden = state.mode !== 'slow'; $('hdOpts').hidden = state.mode !== 'hd'; }
-    renderSummary();
-  });
-});
-
-$('speed').addEventListener('input', (e) => {
-  state.speed = Number(e.target.value);
-  document.querySelectorAll('.seg[data-key="speedPreset"] button').forEach((b) => b.classList.toggle('on', Number(b.dataset.val) === state.speed));
-  renderSummary();
-});
-
-function setSeg(key, val) {
-  document.querySelectorAll(`.seg[data-key="${key}"] button`).forEach((b) => b.classList.toggle('on', b.dataset.val === val));
-  state[key] = val;
-}
+let file = null, src = null, plan = null, conversion = null, downloadUrl = null;
 
 // --- File selection ---
 const drop = $('drop');
@@ -255,108 +184,116 @@ drop.addEventListener('drop', (e) => {
 
 async function loadFile(f) {
   resetOutput();
-  file = f; src = null;
+  file = f; src = null; plan = null;
   $('dropTitle').textContent = f.name;
   $('dropHint').textContent = fmtSize(f.size) + ' · dosri video ke liye tap karein';
-  $('options').hidden = true;
   $('infoWrap').hidden = true;
   setStatus('Video check ho rahi hai...');
 
   try {
-    const input = new Input({ source: new BlobSource(f), formats: ALL_FORMATS });
-    const video = await input.getPrimaryVideoTrack();
-    if (!video) throw new Error('Is file mein video track nahi mila.');
-    const audio = await input.getPrimaryAudioTrack();
-    const duration = await input.computeDuration();
-    const stats = await video.computePacketStats(300);
-
-    src = {
-      width: video.displayWidth,
-      height: video.displayHeight,
-      fps: stats.averagePacketRate,
-      bitrate: stats.averageBitrate,
-      codec: video.codec,
-      duration,
-      hasAudio: !!audio,
-    };
+    src = await analyze(f);
+    plan = makePlan(src);
     renderInfo();
-
-    // Default FPS: keep 60 if the source has it, otherwise 30.
-    const has60 = src.fps >= 50;
-    document.querySelector('.seg[data-key="fps"] button[data-val="60"]').disabled = !has60;
-    setSeg('fps', has60 ? '60' : '30');
-
-    $('options').hidden = false;
+    $('infoWrap').hidden = false;
     setStatus('');
-    renderSummary();
   } catch (err) {
     console.error(err);
     setStatus('Ye video parhi nahi ja saki: ' + err.message, 'err');
   }
 }
 
+async function analyze(f) {
+  const input = new Input({ source: new BlobSource(f), formats: ALL_FORMATS });
+  const video = await input.getPrimaryVideoTrack();
+  if (!video) throw new Error('Is file mein video track nahi mila.');
+  const audio = await input.getPrimaryAudioTrack();
+  const stats = await video.computePacketStats(600);
+
+  // Frame timing: is the frame rate constant, or does it jump around (causes stutter)?
+  const times = [];
+  for await (const p of new EncodedPacketSink(video).packets(undefined, undefined, { metadataOnly: true })) {
+    times.push(p.timestamp);
+    if (times.length >= 600) break;
+  }
+  times.sort((a, b) => a - b);
+  const gaps = times.slice(1).map((t, i) => t - times[i]).filter((g) => g > 0);
+  const median = gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] || 0;
+  const irregular = gaps.filter((g) => Math.abs(g - median) > median * 0.3).length;
+  const variableFps = gaps.length > 10 && irregular / gaps.length > 0.05;
+
+  return {
+    width: video.displayWidth,
+    height: video.displayHeight,
+    fps: stats.averagePacketRate,
+    bitrate: stats.averageBitrate,
+    codec: video.codec,
+    hdr: await video.hasHighDynamicRange(),
+    variableFps,
+    audioCodec: audio?.codec ?? null,
+    duration: await input.computeDuration(),
+  };
+}
+
+// Decide automatically: keep everything untouched when possible, fix only what hurts on upload.
+function makePlan(s) {
+  const short = Math.min(s.width, s.height), long = Math.max(s.width, s.height);
+  const tooBig = short > MAX_SHORT || long > MAX_LONG;
+  const tooFast = s.fps > MAX_FPS + 1;
+  const wrongCodec = s.codec !== 'avc';
+  const needsEncode = tooBig || tooFast || wrongCodec || s.hdr || s.variableFps;
+
+  const steps = [];
+  let target = null;
+  if (needsEncode) {
+    const scale = Math.min(1, MAX_SHORT / short, MAX_LONG / long);
+    const width = Math.round(s.width * scale / 2) * 2;
+    const height = Math.round(s.height * scale / 2) * 2;
+    const fps = STD_FPS.reduce((best, f) => Math.abs(f - Math.min(s.fps, MAX_FPS)) < Math.abs(best - Math.min(s.fps, MAX_FPS)) ? f : best);
+    const pixelRatio = (width * height) / (MAX_SHORT * MAX_LONG);
+    const bitrate = Math.round(BITRATE_1080[fps > 30 ? 60 : 30] * Math.max(pixelRatio, 0.35));
+    target = { width, height, fps, bitrate };
+
+    if (s.hdr) steps.push(['fix', '<b>HDR → SDR</b>: iPhone ki HDR video TikTok/Instagram par dhundli aur washed-out ho jati hai. Isay normal colors mein badla jayega.']);
+    if (tooBig) steps.push(['fix', `<b>${s.width}×${s.height} → ${width}×${height}</b>: platform khud bhi itna hi chhota karta hai, lekin hum high quality par karenge.`]);
+    if (s.variableFps) steps.push(['fix', `<b>FPS constant ${fps}</b>: abhi FPS upar neeche ho raha hai, isi se video atakti hai.`]);
+    else if (tooFast) steps.push(['fix', `<b>${Math.round(s.fps)} → ${fps} FPS</b>: platforms 60 se zyada support nahi karte.`]);
+    if (wrongCodec) steps.push(['fix', `<b>${s.codec.toUpperCase()} → H.264</b>: har platform ka sab se pasandeeda format.`]);
+    steps.push(['fix', `<b>${(bitrate / 1e6).toFixed(0)} Mbps</b> high bitrate par encode, taa ke platform ke compression ke baad bhi detail bachi rahe.`]);
+  } else {
+    steps.push(['ok', '<b>Video bilkul theek hai</b>: H.264, ' + `${s.width}×${s.height}, ${Math.round(s.fps)} FPS constant.`]);
+    steps.push(['ok', '<b>Frames ko haath nahi lagaya jayega</b>: 0% quality loss.']);
+  }
+  if (s.audioCodec && s.audioCodec !== 'aac') steps.push(['fix', '<b>Awaaz → AAC</b>: platform ka standard audio format.']);
+  steps.push(['ok', '<b>Fast-start + purana metadata saaf</b>: upload aur processing ke liye tayyar file.']);
+
+  return { needsEncode, target, steps };
+}
+
 function renderInfo() {
   const items = [
     ['Resolution', `${src.width}×${src.height}`],
-    ['FPS', src.fps ? src.fps.toFixed(1) : '—'],
+    ['FPS', src.fps ? src.fps.toFixed(1) + (src.variableFps ? ' (variable)' : '') : '—'],
     ['Bitrate', src.bitrate ? (src.bitrate / 1e6).toFixed(1) + ' Mbps' : '—'],
-    ['Duration', fmtTime(src.duration)],
+    ['Format', src.codec.toUpperCase() + (src.hdr ? ' · HDR' : '')],
   ];
   $('info').innerHTML = items.map(([k, v]) => `<div><small>${k}</small><b>${v}</b></div>`).join('');
+  $('plan').innerHTML = '<div class="plan-title">Tool ye karega</div>' +
+    plan.steps.map(([cls, text]) => `<li class="${cls}">${text}</li>`).join('');
 
   const warnings = [];
   if (Math.max(src.width, src.height) < 1280) warnings.push('Video ki resolution kam hai. Result original se behtar nahi ho sakta.');
-  if (src.bitrate && src.bitrate < 3e6) warnings.push('Original bitrate kam hai (shayad pehle se compressed, jaise WhatsApp wali).');
-  if (src.fps && Math.abs(src.fps - Math.round(src.fps)) > 0.3) warnings.push('FPS variable lag raha hai. Isi wajah se video atak sakti hai; ye tool isay constant kar dega.');
+  if (src.bitrate && src.bitrate < 3e6) warnings.push('Original bitrate kam hai (shayad pehle se compressed, jaise WhatsApp wali). Original file use karein.');
   $('warn').hidden = !warnings.length;
   $('warn').innerHTML = warnings.map((w) => '⚠ ' + w).join('<br>');
-  $('infoWrap').hidden = false;
 }
 
-// --- Output settings ---
-function targetSettings() {
-  // Never upscale; cap at 1080 short side / 1920 long side. Dimensions must be even.
-  const short = Math.min(src.width, src.height), long = Math.max(src.width, src.height);
-  const scale = Math.min(1, 1080 / short, 1920 / long);
-  const width = Math.round(src.width * scale / 2) * 2;
-  const height = Math.round(src.height * scale / 2) * 2;
-  const fps = Number(state.fps);
-  const pixelRatio = (width * height) / (1080 * 1920);
-  const bitrate = Math.round(PLATFORMS[state.platform].bitrate[fps] * QUALITY_MULT[state.quality] * Math.max(pixelRatio, 0.35));
-  return { width, height, fps, bitrate };
-}
-
-function renderSummary() {
-  $('speedVal').textContent = state.speed + '%';
-  if (!src) return;
-  if (state.mode === 'slow') {
-    const k = state.speed / 100;
-    const audioText = { pitch: 'awaaz normal pitch par slow', tape: 'awaaz slow aur bhari', orig: 'awaaz original speed par', none: 'bina awaaz' }[state.audio];
-    $('summary').innerHTML =
-      `Length: <b>${fmtTime(src.duration)} → ${fmtTime(src.duration / k)}</b> · ` +
-      `FPS: <b>${src.fps.toFixed(0)} → ${(src.fps * k).toFixed(0)}</b><br>` +
-      `Video quality bilkul original (re-encode nahi) · ${src.hasAudio ? audioText : 'video mein awaaz nahi'}`;
-    return;
-  }
-  const t = targetSettings();
-  const estSize = (t.bitrate + 192e3) / 8 * src.duration;
-  $('summary').innerHTML =
-    `Output: <b>${t.width}×${t.height}</b> · <b>${t.fps} FPS constant</b> · <b>${(t.bitrate / 1e6).toFixed(1)} Mbps</b> H.264<br>` +
-    `Andaazan size: ${fmtSize(estSize)}`;
-}
-
-// --- Conversion ---
-$('goBtn').addEventListener('click', () => {
-  if (!file || !src) return;
+// --- Processing ---
+$('goBtn').addEventListener('click', async () => {
+  if (!file || !plan) return;
   resetOutput();
-  (state.mode === 'slow' ? runSlow : runHd)();
-});
+  const t = plan.target;
 
-async function runHd() {
-  const t = targetSettings();
-
-  const supported = await canEncodeVideo('avc', { width: t.width, height: t.height, bitrate: t.bitrate });
-  if (!supported) {
+  if (t && !(await canEncodeVideo('avc', { width: t.width, height: t.height, bitrate: t.bitrate }))) {
     setStatus('Ye browser H.264 encode nahi kar sakta. Chrome, Edge ya Safari (latest) use karein.', 'err');
     return;
   }
@@ -374,30 +311,38 @@ async function runHd() {
       target: new BufferTarget(),
     });
 
-    conversion = await Conversion.init({
-      input, output,
-      video: {
+    let video = {};   // empty = copy frames untouched
+    if (t) {
+      video = {
         codec: 'avc',
         width: t.width,
         height: t.height,
         fit: 'contain',
-        frameRate: t.fps,          // constant frame rate = smooth playback
+        frameRate: t.fps,
         bitrate: t.bitrate,
-        keyFrameInterval: 1,
+        keyFrameInterval: 2,
         forceTranscode: true,
         hardwareAcceleration: 'prefer-hardware',
-      },
-      audio: {
-        codec: 'aac',
-        sampleRate: 48000,
-        numberOfChannels: 2,
-        bitrate: 192e3,
-        forceTranscode: true,
-      },
-      tags: {},                    // strip old metadata
+      };
+      if (src.hdr) {
+        // Drawing onto a regular (sRGB) canvas lets the browser tone-map HDR to normal colors.
+        const canvas = new OffscreenCanvas(t.width, t.height);
+        const ctx = canvas.getContext('2d', { colorSpace: 'srgb' });
+        video.process = (sample) => {
+          sample.draw(ctx, 0, 0, t.width, t.height);
+          return canvas;
+        };
+        video.processedWidth = t.width;
+        video.processedHeight = t.height;
+      }
+    }
+
+    conversion = await Conversion.init({
+      input, output, video,
+      audio: src.audioCodec === 'aac' ? {} : { codec: 'aac', sampleRate: 48000, numberOfChannels: 2, bitrate: 256e3 },
+      tags: {},
       showWarnings: false,
     });
-
     if (!conversion.isValid) {
       const reasons = conversion.discardedTracks.map((d) => `${d.track.type}: ${d.reason}`).join(', ');
       throw new Error('Conversion possible nahi (' + reasons + ')');
@@ -409,7 +354,6 @@ async function runHd() {
       const eta = p > 0.02 ? elapsed / p - elapsed : null;
       setStatus(`Processing ${Math.round(p * 100)}%` + (eta != null ? ` · ~${fmtTime(eta)} baqi` : ''));
     };
-
     await conversion.execute();
 
     const blob = new Blob([output.target.buffer], { type: 'video/mp4' });
@@ -421,203 +365,16 @@ async function runHd() {
     setProgress(1);
     setStatus(`Tayyar! ${fmtSize(blob.size)} · ${fmtTime((performance.now() - started) / 1000)} mein`, 'ok');
   } catch (err) {
-    if (err?.name === 'ConversionCanceledError' || /cancel/i.test(err?.message)) {
-      setStatus('Cancel ho gaya.');
-    } else {
-      console.error(err);
-      setStatus('Error: ' + (err?.message || err), 'err');
-    }
+    if (err?.name === 'ConversionCanceledError' || /cancel/i.test(err?.message)) setStatus('Cancel ho gaya.');
+    else { console.error(err); setStatus('Error: ' + (err?.message || err), 'err'); }
   } finally {
     conversion = null;
     $('goBtn').disabled = false;
     $('progressWrap').hidden = true;
   }
-}
+});
 
-// --- Slow Mode: stretch timestamps without re-encoding the video ---
-async function runSlow() {
-  const k = state.speed / 100;   // playback speed factor, e.g. 0.5
-  cancelled = false;
-  $('goBtn').disabled = true;
-  $('progressWrap').hidden = false;
-  setProgress(0);
-  const started = performance.now();
-  const checkCancel = () => { if (cancelled) throw new Error('cancel'); };
-
-  try {
-    const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
-    const vTrack = await input.getPrimaryVideoTrack();
-    const aTrack = state.audio === 'none' ? null : await input.getPrimaryAudioTrack();
-    const output = new Output({
-      format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
-      target: new BufferTarget(),
-    });
-
-    const vSource = new EncodedVideoPacketSource(vTrack.codec);
-    output.addVideoTrack(vSource, { rotation: vTrack.rotation });
-
-    // Audio: either copy packets untouched, or decode → slow down → AAC.
-    let aSource = null, slowedAudio = null;
-    if (aTrack && state.audio === 'orig') {
-      aSource = new EncodedAudioPacketSource(aTrack.codec);
-      output.addAudioTrack(aSource);
-    } else if (aTrack) {
-      setStatus('Awaaz process ho rahi hai...');
-      const pcm = await decodeAudio(aTrack, (p) => { checkCancel(); setProgress(p * 0.3); });
-      checkCancel();
-      if (!pcm.channels[0].length) throw new Error('Awaaz decode nahi ho saki. "Original speed" ya "Hata dein" try karein.');
-      slowedAudio = state.audio === 'tape' ? await slowTape(pcm, k) : slowKeepPitch(pcm, k);
-      aSource = new AudioBufferSource({ codec: 'aac', bitrate: 192e3 });
-      output.addAudioTrack(aSource);
-    }
-
-    await output.start();
-    setStatus('Video likhi ja rahi hai...');
-
-    const vConfig = await vTrack.getDecoderConfig();
-    let first = true;
-    for await (const p of new EncodedPacketSink(vTrack).packets()) {
-      checkCancel();
-      const slowed = new EncodedPacket(p.data, p.type, p.timestamp / k, p.duration / k, p.sequenceNumber);
-      await vSource.add(slowed, first ? { decoderConfig: vConfig } : undefined);
-      first = false;
-      setProgress(0.3 + 0.6 * Math.min(1, p.timestamp / src.duration));
-    }
-
-    if (aSource && state.audio === 'orig') {
-      const aConfig = await aTrack.getDecoderConfig();
-      let firstA = true;
-      for await (const p of new EncodedPacketSink(aTrack).packets()) {
-        checkCancel();
-        await aSource.add(p, firstA ? { decoderConfig: aConfig } : undefined);
-        firstA = false;
-      }
-    } else if (aSource) {
-      await aSource.add(slowedAudio);
-    }
-
-    setStatus('File final ho rahi hai...');
-    await output.finalize();
-
-    const blob = new Blob([output.target.buffer], { type: 'video/mp4' });
-    downloadUrl = URL.createObjectURL(blob);
-    const dl = $('dlBtn');
-    dl.href = downloadUrl;
-    dl.download = file.name.replace(/\.[^.]+$/, '') + `_slow${state.speed}.mp4`;
-    dl.hidden = false;
-    setProgress(1);
-    setStatus(`Tayyar! ${fmtTime(src.duration / k)} lambi · ${fmtSize(blob.size)} · ${fmtTime((performance.now() - started) / 1000)} mein`, 'ok');
-  } catch (err) {
-    if (cancelled) setStatus('Cancel ho gaya.');
-    else { console.error(err); setStatus('Error: ' + (err?.message || err), 'err'); }
-  } finally {
-    $('goBtn').disabled = false;
-    $('progressWrap').hidden = true;
-  }
-}
-
-// Decode a whole audio track into per-channel Float32Arrays (max 2 channels).
-async function decodeAudio(track, onProgress) {
-  const sampleRate = track.sampleRate;
-  const channels = Math.min(2, track.numberOfChannels);
-  const chunks = [];
-  let total = 0;
-  for await (const sample of new AudioSampleSink(track).samples()) {
-    const buf = sample.toAudioBuffer();
-    sample.close();
-    const data = [];
-    for (let c = 0; c < channels; c++) data.push(buf.getChannelData(Math.min(c, buf.numberOfChannels - 1)).slice());
-    chunks.push(data);
-    total += buf.length;
-    onProgress(Math.min(1, (total / sampleRate) / src.duration));
-  }
-  const out = Array.from({ length: channels }, () => new Float32Array(total));
-  let off = 0;
-  for (const data of chunks) {
-    for (let c = 0; c < channels; c++) out[c].set(data[c], off);
-    off += data[0].length;
-  }
-  return { channels: out, sampleRate };
-}
-
-function toAudioBuffer(channels, sampleRate) {
-  const buf = new AudioBuffer({ length: channels[0].length, numberOfChannels: channels.length, sampleRate });
-  channels.forEach((d, c) => buf.copyToChannel(d, c));
-  return buf;
-}
-
-// Tape-style slowdown: play the audio slower, so pitch drops along with speed.
-async function slowTape({ channels, sampleRate }, k) {
-  const length = Math.ceil(channels[0].length / k);
-  const ctx = new OfflineAudioContext(channels.length, length, sampleRate);
-  const node = ctx.createBufferSource();
-  node.buffer = toAudioBuffer(channels, sampleRate);
-  node.playbackRate.value = k;
-  node.connect(ctx.destination);
-  node.start();
-  return ctx.startRendering();
-}
-
-// Pitch-preserving time stretch (WSOLA): longer audio, same voice.
-function slowKeepPitch({ channels, sampleRate }, k) {
-  const len = channels[0].length;
-  const win = Math.round(sampleRate * 0.04 / 2) * 2;   // ~40 ms
-  const hop = win / 2;                                  // output hop
-  const tol = Math.round(sampleRate * 0.01);            // ±10 ms search
-  const D = 4;                                          // decimation for the coarse search
-
-  // Mono, decimated copy for fast similarity search.
-  const mono = new Float32Array(Math.ceil(len / D));
-  for (let i = 0; i < mono.length; i++) {
-    let sum = 0;
-    for (const ch of channels) sum += ch[i * D] || 0;
-    mono[i] = sum / channels.length;
-  }
-  const window = new Float32Array(win);
-  for (let i = 0; i < win; i++) window[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / win);
-
-  const outLen = Math.ceil(len / k) + win;
-  const out = channels.map(() => new Float32Array(outLen));
-  const norm = new Float32Array(outLen);
-  const cmpLen = Math.floor(hop / D);
-
-  let prev = 0;
-  for (let n = 0; ; n++) {
-    const outPos = n * hop;
-    const nominal = Math.round((n * hop) * k);
-    if (nominal + win >= len || outPos + win >= outLen) break;
-
-    let pos = nominal;
-    if (n > 0) {
-      // Find the input position whose start best continues the previous segment.
-      const target = Math.floor((prev + hop) / D);
-      const lo = Math.max(0, Math.floor((nominal - tol) / D));
-      const hi = Math.min(Math.floor((len - win) / D) - 1, Math.floor((nominal + tol) / D));
-      let best = -Infinity;
-      for (let c = lo; c <= hi; c++) {
-        let corr = 0;
-        for (let i = 0; i < cmpLen; i++) corr += mono[target + i] * mono[c + i];
-        if (corr > best) { best = corr; pos = c * D; }
-      }
-    }
-    for (let c = 0; c < channels.length; c++) {
-      const src = channels[c], dst = out[c];
-      for (let i = 0; i < win; i++) dst[outPos + i] += src[pos + i] * window[i];
-    }
-    for (let i = 0; i < win; i++) norm[outPos + i] += window[i];
-    prev = pos;
-  }
-
-  const finalLen = Math.round(len / k);
-  const result = out.map((d) => {
-    const r = new Float32Array(finalLen);
-    for (let i = 0; i < finalLen; i++) r[i] = norm[i] > 1e-3 ? d[i] / norm[i] : 0;
-    return r;
-  });
-  return toAudioBuffer(result, sampleRate);
-}
-
-$('cancelBtn').addEventListener('click', () => { cancelled = true; conversion?.cancel(); });
+$('cancelBtn').addEventListener('click', () => conversion?.cancel());
 
 // --- Install as app (PWA) ---
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.error);
