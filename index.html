@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#05080d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HD Upload">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>HD Upload Tool</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@600;800&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05080d;
+    --card: rgba(14, 20, 32, 0.72);
+    --border: rgba(255, 255, 255, 0.09);
+    --accent: #00e5ff;
+    --accent2: #00ffaa;
+    --text: #fff;
+    --dim: rgba(255, 255, 255, 0.62);
+    --danger: #ff4d4d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+    display: flex; justify-content: center; align-items: flex-start;
+    padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  body::before {
+    content: ''; position: fixed; inset: -30%; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(circle at 20% 15%, rgba(0, 229, 255, 0.18), transparent 40%),
+      radial-gradient(circle at 85% 90%, rgba(0, 255, 170, 0.14), transparent 40%);
+  }
+  .card {
+    width: 100%; max-width: 440px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 28px;
+    padding: 32px 24px; backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+    box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+  }
+  h1 {
+    font-family: 'Exo 2', sans-serif; font-weight: 800; font-style: italic;
+    text-transform: uppercase; text-align: center; font-size: 1.6rem; margin: 0 0 6px;
+    background: linear-gradient(135deg, #fff, var(--accent) 55%, var(--accent2));
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .sub { text-align: center; color: var(--dim); font-size: 0.72rem; letter-spacing: 2px; text-transform: uppercase; margin: 0 0 26px; }
+
+  .drop {
+    display: block; border: 1.5px dashed rgba(0, 229, 255, 0.35); border-radius: 20px;
+    padding: 26px 16px; text-align: center; cursor: pointer; background: rgba(0, 229, 255, 0.03);
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .drop:hover, .drop.over { background: rgba(0, 229, 255, 0.08); border-color: var(--accent); }
+  .drop strong { display: block; font-size: 0.95rem; margin-bottom: 4px; }
+  .drop span { color: var(--dim); font-size: 0.75rem; }
+  #fileInput { display: none; }
+
+  .info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 18px 0 4px; }
+  .info div { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
+  .info small { display: block; color: var(--dim); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; }
+  .info b { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+  .warn { color: #ffcc4d; font-size: 0.75rem; margin: 8px 0 0; line-height: 1.45; }
+
+  .label { font-size: 0.7rem; color: var(--dim); text-transform: uppercase; letter-spacing: 1.5px; margin: 20px 0 8px; font-weight: 600; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button {
+    flex: 1 1 0; min-width: 90px; padding: 11px 8px; border-radius: 14px;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--text);
+    font: 600 0.8rem 'Inter', sans-serif; cursor: pointer; transition: all 0.2s;
+  }
+  .seg button small { display: block; color: var(--dim); font-weight: 400; font-size: 0.65rem; margin-top: 2px; }
+  .seg button.on { border-color: var(--accent); background: rgba(0, 229, 255, 0.12); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .seg button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .summary { margin-top: 16px; font-size: 0.75rem; color: var(--dim); line-height: 1.5; text-align: center; }
+  .summary b { color: var(--accent2); }
+
+  .btn {
+    width: 100%; margin-top: 18px; padding: 16px; border-radius: 100px; border: 0; cursor: pointer;
+    font: 800 0.95rem 'Exo 2', sans-serif; letter-spacing: 1px; text-transform: uppercase;
+    background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #001218;
+    transition: transform 0.15s, opacity 0.2s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.ghost { background: rgba(255,77,77,0.1); color: var(--danger); border: 1px solid rgba(255,77,77,0.3); padding: 12px; font-size: 0.8rem; margin-top: 10px; }
+  .btn.dl { background: #fff; color: #000; text-decoration: none; display: block; text-align: center; }
+
+  .bar { height: 8px; border-radius: 8px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 18px; }
+  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.2s; }
+  #status { text-align: center; font-size: 0.78rem; margin-top: 10px; min-height: 1.2em; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #status.ok { color: var(--accent2); }
+  #status.err { color: var(--danger); }
+
+  .btn.install { background: rgba(0,229,255,0.1); color: var(--text); border: 1px solid rgba(0,229,255,0.35); font-size: 0.82rem; padding: 13px; }
+  .ios-tip { text-align: center; font-size: 0.75rem; color: var(--dim); margin: 16px 0 0; }
+  .ios-tip b { color: var(--text); }
+  details { margin-top: 22px; border: 1px solid var(--border); border-radius: 18px; background: rgba(255,255,255,0.02); }
+  summary { padding: 14px 18px; cursor: pointer; font: 800 0.75rem 'Exo 2', sans-serif; letter-spacing: 1px; text-transform: uppercase; }
+  details ul { margin: 0; padding: 0 18px 16px 34px; color: var(--dim); font-size: 0.78rem; line-height: 1.6; }
+  details li b { color: var(--text); }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>HD Upload Tool</h1>
+  <p class="sub">TikTok · Reels · Shorts ke liye</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="fileInput" accept="video/*">
+    <strong id="dropTitle">Video select karein</strong>
+    <span id="dropHint">MP4 / MOV · video phone se bahar nahi jati</span>
+  </label>
+
+  <div id="infoWrap" hidden>
+    <div class="info" id="info"></div>
+    <p class="warn" id="warn" hidden></p>
+  </div>
+
+  <div id="options" hidden>
+    <div class="label">Platform</div>
+    <div class="seg" data-key="platform">
+      <button data-val="tiktok" class="on">TikTok</button>
+      <button data-val="instagram">Instagram</button>
+      <button data-val="youtube">YT Shorts</button>
+    </div>
+
+    <div class="label">Smoothness (FPS)</div>
+    <div class="seg" data-key="fps">
+      <button data-val="30">30 FPS<small>Sab se safe</small></button>
+      <button data-val="60">60 FPS<small>Extra smooth</small></button>
+    </div>
+
+    <div class="label">Quality</div>
+    <div class="seg" data-key="quality">
+      <button data-val="high" class="on">High<small>Recommended</small></button>
+      <button data-val="max">Max<small>Bari file</small></button>
+    </div>
+
+    <p class="summary" id="summary"></p>
+    <button class="btn" id="goBtn">Optimize karein</button>
+  </div>
+
+  <div id="progressWrap" hidden>
+    <div class="bar"><i id="barFill"></i></div>
+    <button class="btn ghost" id="cancelBtn">Cancel</button>
+  </div>
+  <div id="status"></div>
+  <a class="btn dl" id="dlBtn" hidden>Download HD video</a>
+
+  <button class="btn install" id="installBtn" hidden>📲 App install karein</button>
+  <p class="ios-tip" id="iosTip" hidden>iPhone par install: Safari mein <b>Share</b> button → <b>Add to Home Screen</b></p>
+
+  <details>
+    <summary>Upload karte waqt ye zaroor karein</summary>
+    <ul>
+      <li><b>TikTok:</b> Post screen par "More options" mein <b>Allow high-quality uploads</b> ON karein.</li>
+      <li><b>Instagram:</b> Settings → Data usage → <b>Upload at highest quality</b> ON karein.</li>
+      <li><b>WiFi / tez internet</b> par upload karein. Slow net par app khud quality kam kar deti hai.</li>
+      <li>Video <b>WhatsApp se forward</b> na karein. Wo pehle hi compress ho chuki hoti hai.</li>
+      <li>Original video jitni achi hogi, result utna acha hoga. Ye tool kharab video ko HD nahi bana sakta.</li>
+    </ul>
+  </details>
+</main>
+
+<script type="module">
+import {
+  Input, Output, Conversion, ALL_FORMATS, BlobSource, BufferTarget,
+  Mp4OutputFormat, canEncodeVideo,
+} from 'https://cdn.jsdelivr.net/npm/mediabunny@1.61.0/dist/bundles/mediabunny.min.mjs';
+
+const $ = (id) => document.getElementById(id);
+
+// Bitrates (bps) at 1080x1920. Scaled by pixel count for smaller videos.
+const PLATFORMS = {
+  tiktok:    { name: 'TikTok',    bitrate: { 30: 12e6, 60: 18e6 } },
+  instagram: { name: 'Instagram', bitrate: { 30: 10e6, 60: 15e6 } },
+  youtube:   { name: 'YT Shorts', bitrate: { 30: 12e6, 60: 20e6 } },
+};
+const QUALITY_MULT = { high: 1, max: 1.5 };
+
+const state = { platform: 'tiktok', fps: '30', quality: 'high' };
+let file = null, src = null, conversion = null, downloadUrl = null;
+
+// --- Option buttons ---
+document.querySelectorAll('.seg').forEach((seg) => {
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || btn.disabled) return;
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
+    state[seg.dataset.key] = btn.dataset.val;
+    renderSummary();
+  });
+});
+
+function setSeg(key, val) {
+  document.querySelectorAll(`.seg[data-key="${key}"] button`).forEach((b) => b.classList.toggle('on', b.dataset.val === val));
+  state[key] = val;
+}
+
+// --- File selection ---
+const drop = $('drop');
+$('fileInput').addEventListener('change', (e) => e.target.files[0] && loadFile(e.target.files[0]));
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+async function loadFile(f) {
+  resetOutput();
+  file = f; src = null;
+  $('dropTitle').textContent = f.name;
+  $('dropHint').textContent = fmtSize(f.size) + ' · dosri video ke liye tap karein';
+  $('options').hidden = true;
+  $('infoWrap').hidden = true;
+  setStatus('Video check ho rahi hai...');
+
+  try {
+    const input = new Input({ source: new BlobSource(f), formats: ALL_FORMATS });
+    const video = await input.getPrimaryVideoTrack();
+    if (!video) throw new Error('Is file mein video track nahi mila.');
+    const audio = await input.getPrimaryAudioTrack();
+    const duration = await input.computeDuration();
+    const stats = await video.computePacketStats(300);
+
+    src = {
+      width: video.displayWidth,
+      height: video.displayHeight,
+      fps: stats.averagePacketRate,
+      bitrate: stats.averageBitrate,
+      codec: video.codec,
+      duration,
+      hasAudio: !!audio,
+    };
+    renderInfo();
+
+    // Default FPS: keep 60 if the source has it, otherwise 30.
+    const has60 = src.fps >= 50;
+    document.querySelector('.seg[data-key="fps"] button[data-val="60"]').disabled = !has60;
+    setSeg('fps', has60 ? '60' : '30');
+
+    $('options').hidden = false;
+    setStatus('');
+    renderSummary();
+  } catch (err) {
+    console.error(err);
+    setStatus('Ye video parhi nahi ja saki: ' + err.message, 'err');
+  }
+}
+
+function renderInfo() {
+  const items = [
+    ['Resolution', `${src.width}×${src.height}`],
+    ['FPS', src.fps ? src.fps.toFixed(1) : '—'],
+    ['Bitrate', src.bitrate ? (src.bitrate / 1e6).toFixed(1) + ' Mbps' : '—'],
+    ['Duration', fmtTime(src.duration)],
+  ];
+  $('info').innerHTML = items.map(([k, v]) => `<div><small>${k}</small><b>${v}</b></div>`).join('');
+
+  const warnings = [];
+  if (Math.max(src.width, src.height) < 1280) warnings.push('Video ki resolution kam hai. Result original se behtar nahi ho sakta.');
+  if (src.bitrate && src.bitrate < 3e6) warnings.push('Original bitrate kam hai (shayad pehle se compressed, jaise WhatsApp wali).');
+  if (src.fps && Math.abs(src.fps - Math.round(src.fps)) > 0.3) warnings.push('FPS variable lag raha hai. Isi wajah se video atak sakti hai; ye tool isay constant kar dega.');
+  $('warn').hidden = !warnings.length;
+  $('warn').innerHTML = warnings.map((w) => '⚠ ' + w).join('<br>');
+  $('infoWrap').hidden = false;
+}
+
+// --- Output settings ---
+function targetSettings() {
+  // Never upscale; cap at 1080 short side / 1920 long side. Dimensions must be even.
+  const short = Math.min(src.width, src.height), long = Math.max(src.width, src.height);
+  const scale = Math.min(1, 1080 / short, 1920 / long);
+  const width = Math.round(src.width * scale / 2) * 2;
+  const height = Math.round(src.height * scale / 2) * 2;
+  const fps = Number(state.fps);
+  const pixelRatio = (width * height) / (1080 * 1920);
+  const bitrate = Math.round(PLATFORMS[state.platform].bitrate[fps] * QUALITY_MULT[state.quality] * Math.max(pixelRatio, 0.35));
+  return { width, height, fps, bitrate };
+}
+
+function renderSummary() {
+  if (!src) return;
+  const t = targetSettings();
+  const estSize = (t.bitrate + 192e3) / 8 * src.duration;
+  $('summary').innerHTML =
+    `Output: <b>${t.width}×${t.height}</b> · <b>${t.fps} FPS constant</b> · <b>${(t.bitrate / 1e6).toFixed(1)} Mbps</b> H.264<br>` +
+    `Andaazan size: ${fmtSize(estSize)}`;
+}
+
+// --- Conversion ---
+$('goBtn').addEventListener('click', async () => {
+  if (!file || !src) return;
+  resetOutput();
+  const t = targetSettings();
+
+  const supported = await canEncodeVideo('avc', { width: t.width, height: t.height, bitrate: t.bitrate });
+  if (!supported) {
+    setStatus('Ye browser H.264 encode nahi kar sakta. Chrome, Edge ya Safari (latest) use karein.', 'err');
+    return;
+  }
+
+  $('goBtn').disabled = true;
+  $('progressWrap').hidden = false;
+  setProgress(0);
+  setStatus('Shuru ho raha hai...');
+  const started = performance.now();
+
+  try {
+    const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+    const output = new Output({
+      format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+      target: new BufferTarget(),
+    });
+
+    conversion = await Conversion.init({
+      input, output,
+      video: {
+        codec: 'avc',
+        width: t.width,
+        height: t.height,
+        fit: 'contain',
+        frameRate: t.fps,          // constant frame rate = smooth playback
+        bitrate: t.bitrate,
+        keyFrameInterval: 1,
+        forceTranscode: true,
+        hardwareAcceleration: 'prefer-hardware',
+      },
+      audio: {
+        codec: 'aac',
+        sampleRate: 48000,
+        numberOfChannels: 2,
+        bitrate: 192e3,
+        forceTranscode: true,
+      },
+      tags: {},                    // strip old metadata
+      showWarnings: false,
+    });
+
+    if (!conversion.isValid) {
+      const reasons = conversion.discardedTracks.map((d) => `${d.track.type}: ${d.reason}`).join(', ');
+      throw new Error('Conversion possible nahi (' + reasons + ')');
+    }
+
+    conversion.onProgress = (p) => {
+      setProgress(p);
+      const elapsed = (performance.now() - started) / 1000;
+      const eta = p > 0.02 ? elapsed / p - elapsed : null;
+      setStatus(`Processing ${Math.round(p * 100)}%` + (eta != null ? ` · ~${fmtTime(eta)} baqi` : ''));
+    };
+
+    await conversion.execute();
+
+    const blob = new Blob([output.target.buffer], { type: 'video/mp4' });
+    downloadUrl = URL.createObjectURL(blob);
+    const dl = $('dlBtn');
+    dl.href = downloadUrl;
+    dl.download = file.name.replace(/\.[^.]+$/, '') + '_HD.mp4';
+    dl.hidden = false;
+    setProgress(1);
+    setStatus(`Tayyar! ${fmtSize(blob.size)} · ${fmtTime((performance.now() - started) / 1000)} mein`, 'ok');
+  } catch (err) {
+    if (err?.name === 'ConversionCanceledError' || /cancel/i.test(err?.message)) {
+      setStatus('Cancel ho gaya.');
+    } else {
+      console.error(err);
+      setStatus('Error: ' + (err?.message || err), 'err');
+    }
+  } finally {
+    conversion = null;
+    $('goBtn').disabled = false;
+    $('progressWrap').hidden = true;
+  }
+});
+
+$('cancelBtn').addEventListener('click', () => conversion?.cancel());
+
+// --- Install as app (PWA) ---
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.error);
+
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $('installBtn').hidden = false;
+});
+$('installBtn').addEventListener('click', async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  $('installBtn').hidden = true;
+});
+window.addEventListener('appinstalled', () => { $('installBtn').hidden = true; });
+
+const isStandalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+if (isIOS && !isStandalone) $('iosTip').hidden = false;
+
+// --- Helpers ---
+function resetOutput() {
+  if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+  downloadUrl = null;
+  $('dlBtn').hidden = true;
+}
+function setProgress(p) { $('barFill').style.width = (p * 100).toFixed(1) + '%'; }
+function setStatus(msg, cls = '') { const s = $('status'); s.textContent = msg; s.className = cls; }
+function fmtSize(b) { return b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(1) + ' MB'; }
+function fmtTime(s) {
+  s = Math.max(0, Math.round(s));
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "HD Upload Tool",
+  "short_name": "HD Upload",
+  "description": "TikTok, Reels aur Shorts ke liye video ko HD aur smooth banayein.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#05080d",
+  "theme_color": "#05080d",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
